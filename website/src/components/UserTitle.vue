@@ -4,9 +4,11 @@ import { mapState } from 'pinia'
 import UserModerationTools from './UserModerationTools.vue'
 import PurchaseHistory from './PurchaseHistory.vue'
 import ModerationHistory from './ModerationHistory.vue'
+import PrefabsList from './PrefabsList.vue'
 
 import { getUserInfoRequest } from '../requests/GetUserInfoRequest.js'
 import { getUserInfoAdminRequest } from '../requests/GetUserInfoAdminRequest.js'
+import { getPrefabListRequest } from '../requests/GetPrefabListRequest.js'
 
 export default {
 
@@ -14,6 +16,7 @@ export default {
     UserModerationTools,
     PurchaseHistory,
     ModerationHistory,
+    PrefabsList,
   },
 
   props: {
@@ -32,7 +35,7 @@ export default {
       return '';
     },
 
-    ...mapState(useUserStore, ['userID', 'isSuperModerator', 'accessToken'])
+    ...mapState(useUserStore, ['userID', 'isSuperModerator', 'isModerator', 'accessToken'])
   },
 
   data() {
@@ -43,8 +46,10 @@ export default {
       loaded: false,
       userInfo: undefined,
       userInfoAdmin: undefined,
+      prefabsList: undefined,
       showPurchaseHistory: false,
       showModerationHistory: false,
+      showPrefabsList: false,
       copied: false,
       isPunished: false,
       isReset: false,
@@ -99,6 +104,29 @@ export default {
       }
     },
 
+    async getPrefabsList() {
+      if (!this.prefabsList) {
+        this.prefabsList = await getPrefabListRequest(this.$api_server_url, this.accessToken, this.identifier, this.$max_level_format_version);
+      }
+    },
+
+    async getRestOfPrefabs() {
+      while (this.prefabsList[this.prefabsList.length - 1]?.cursor) {
+        const cursor = this.prefabsList[this.prefabsList.length - 1].cursor;
+        const nextList = await getPrefabListRequest(this.$api_server_url, this.accessToken, this.identifier, this.$max_level_format_version, cursor)
+        this.prefabsList = this.prefabsList.concat(nextList);
+      }
+    },
+
+    async togglePrefabsList() {
+      if (this.$refs.prefabButtonText.innerText === "Loading") return;
+      this.$refs.prefabButtonText.innerText = "Loading";
+      await this.getPrefabsList();
+      this.getRestOfPrefabs();
+      this.$refs.prefabButtonText.innerText = "Prefabs";
+      this.showPrefabsList = !this.showPrefabsList;
+    },
+
     didPunishOrReset(bad) {
       if (bad) {
         this.isPunished = true;
@@ -106,16 +134,30 @@ export default {
         this.isReset = true;
         this.isPunished = false;
       }
-    }
+    },
+
+    escapeEvent(e) {
+      if (e.code === "Escape") {
+        this.showPrefabsList = false;
+      }
+    },
   },
 
   created() {
-    this.updateDetails()
+    this.updateDetails();
+    this.prefabsList = undefined;
+
+    this.escapeListener = document.addEventListener("keydown", this.escapeEvent);
+  },
+
+  unmounted() {
+    document.removeEventListener("keydown", this.escapeListener);
   },
 
   watch: {
     otherUserID() {
-      this.updateDetails()
+      this.updateDetails();
+      this.prefabsList = undefined;
     }
   }
 }
@@ -140,14 +182,18 @@ export default {
           {{ count }} level{{ count > 1 ? 's' : '' }}
         </div>
       </div>
-      <div v-if="loaded && isSuperModerator" class="history-buttons">
-        <button class="history-button" @click="togglePurchaseHistory">
+      <div v-if="loaded && isModerator" class="history-buttons">
+        <button v-if="isSuperModerator" class="history-button" @click="togglePurchaseHistory">
           Purchases
           <img src="./../assets/icons/clock.svg" alt="history">
         </button>
-        <button class="history-button" @click="toggleModerationHistory">
+        <button v-if="isSuperModerator" class="history-button" @click="toggleModerationHistory">
           Moderation
           <img src="./../assets/icons/clock.svg" alt="history">
+        </button>
+        <button class="history-button" @click="togglePrefabsList">
+          <span ref="prefabButtonText">Prefabs</span>
+          <img src="./../assets/icons/block.svg" alt="prefabs">
         </button>
       </div>
     </div>
@@ -166,6 +212,9 @@ export default {
   </div>
   <PurchaseHistory v-if="showPurchaseHistory && loaded && isSuperModerator" :userInfo="userInfoAdmin"/>
   <ModerationHistory v-if="showModerationHistory && loaded && isSuperModerator" :userInfo="userInfoAdmin"/>
+  <Teleport to="body">
+    <PrefabsList v-if="showPrefabsList && loaded && isModerator" :prefabsList="prefabsList" :userID="identifier" @escape="showPrefabsList = false"/>
+  </Teleport>
 </template>
 
 
