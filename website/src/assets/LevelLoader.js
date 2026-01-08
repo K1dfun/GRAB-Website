@@ -29,6 +29,7 @@ import textureDefaultColoredURL from './textures/default_colored.png';
 import textureBouncingURL from './textures/bouncing.png';
 import textureSnowURL from './textures/snow.png';
 import textureTriggerURL from './textures/trigger.png';
+import textureCodeURL from './textures/code.png';
 import textureSublevelTriggerURL from './textures/sublevel_trigger.png';
 import textureSoundURL from './textures/sound.png';
 
@@ -125,6 +126,7 @@ class LevelLoader {
 			altStartMaterial,
 			particleMaterial,
 			getMaterialForTexture(textureSoundURL, 1.0, SHADERS.levelVS, SHADERS.levelFS, [0.4, 0.4, 0.4, 64.0], 1.0),
+			getMaterialForTexture(textureCodeURL, 3.0, SHADERS.levelVS, SHADERS.levelFS, [0.4, 0.4, 0.4, 64.0], 1.0),
 		];
 
 		let skyMaterial = new THREE.ShaderMaterial();
@@ -150,6 +152,7 @@ class LevelLoader {
 			lights: true,
 			text: false,
 			triggers: false,
+			code: false,
 			sound: false,
 			sublevels: false,
 			static: false,
@@ -841,6 +844,52 @@ class LevelLoader {
 					level.nodes.shape[node.levelNodeTrigger.shape || 1000]?.push(object);
 					level.nodes.levelNodeTrigger.push(object);
 					level.complexity += 5;
+				} else if (node.levelNodeGASM) {
+					let material = objectMaterials[9];
+
+					let newMaterial = material.clone();
+					newMaterial.uniforms.colorTexture = material.uniforms.colorTexture;
+
+					newMaterial.transparent = true;
+					newMaterial.uniforms.transparentEnabled.value = 1.0;
+					object = new THREE.Mesh(shapes[0], newMaterial);
+
+					parentNode.add(object);
+					object.position.x = -node.levelNodeGASM.position.x;
+					object.position.y = node.levelNodeGASM.position.y;
+					object.position.z = -node.levelNodeGASM.position.z;
+
+					object.scale.x = node.levelNodeGASM.scale.x;
+					object.scale.y = node.levelNodeGASM.scale.y;
+					object.scale.z = node.levelNodeGASM.scale.z;
+
+					object.quaternion.x = -node.levelNodeGASM.rotation.x;
+					object.quaternion.y = node.levelNodeGASM.rotation.y;
+					object.quaternion.z = -node.levelNodeGASM.rotation.z;
+					object.quaternion.w = node.levelNodeGASM.rotation.w;
+
+					object.initialPosition = object.position.clone();
+					object.initialRotation = object.quaternion.clone();
+
+					let targetVector = new THREE.Vector3();
+					let targetQuaternion = new THREE.Quaternion();
+					let worldMatrix = new THREE.Matrix4();
+					worldMatrix.compose(
+						object.getWorldPosition(targetVector),
+						object.getWorldQuaternion(targetQuaternion),
+						object.getWorldScale(targetVector),
+					);
+
+					let normalMatrix = new THREE.Matrix3();
+					normalMatrix.getNormalMatrix(worldMatrix);
+					newMaterial.uniforms.worldNormalMatrix.value = normalMatrix;
+
+					object.isCode = true;
+					object.visible = this.options.code;
+
+					level.nodes.shape[1000]?.push(object);
+					level.nodes.levelNodeGASM.push(object);
+					level.complexity += 5;
 				} else if (node.levelNodeSound) {
 					let material = objectMaterials[8];
 
@@ -946,12 +995,15 @@ class LevelLoader {
 					let material = objectMaterials[2];
 					let newMaterial = material.clone();
 					newMaterial.uniforms.colorTexture = material.uniforms.colorTexture;
-
-					object = new THREE.Mesh(objects[1], newMaterial);
+					object = node.levelNodeSign.hideModel ? new THREE.Mesh() : new THREE.Mesh(objects[1], newMaterial);
 					parentNode.add(object);
 					object.position.x = -node.levelNodeSign.position.x;
 					object.position.y = node.levelNodeSign.position.y;
 					object.position.z = -node.levelNodeSign.position.z;
+
+					object.scale.x = node.levelNodeSign.hideModel ? node.levelNodeSign.scale : 1;
+					object.scale.y = node.levelNodeSign.hideModel ? node.levelNodeSign.scale : 1;
+					object.scale.z = node.levelNodeSign.hideModel ? node.levelNodeSign.scale : 1;
 
 					object.quaternion.x = -node.levelNodeSign.rotation.x;
 					object.quaternion.y = node.levelNodeSign.rotation.y;
@@ -989,6 +1041,13 @@ class LevelLoader {
 
 						const processedText = processString(signText);
 
+						const color = new THREE.Color(1, 1, 1);
+						if (node.levelNodeSign.color) {
+							color.r = node.levelNodeSign.color.r ?? 0;
+							color.g = node.levelNodeSign.color.g ?? 0;
+							color.b = node.levelNodeSign.color.b ?? 0;
+						}
+
 						const lines = processedText.split('\n');
 						lines.forEach((line, index) => {
 							const textGeometry = new TextGeometry(line, {
@@ -999,7 +1058,7 @@ class LevelLoader {
 								bevelEnabled: false,
 							});
 
-							const textMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+							const textMaterial = new THREE.MeshBasicMaterial({ color: color });
 							const textMesh = new THREE.Mesh(textGeometry, textMaterial);
 
 							textGeometry.computeBoundingBox();
@@ -1008,7 +1067,13 @@ class LevelLoader {
 							const textHeight = boundingBox.max.y - boundingBox.min.y;
 
 							const verticalSpacing = (textHeight + 0.2 * (index + 1)) / 2;
-							textMesh.position.add(new THREE.Vector3(textWidth / 2, -verticalSpacing + 0.05 * (lines.length + 1), -0.025)); // Adjust these values to place the text on the block
+							textMesh.position.add(
+								new THREE.Vector3(
+									textWidth / 2,
+									-verticalSpacing + 0.05 * (lines.length + 1),
+									-(node.levelNodeSign.hideModel ? 0 : 0.021),
+								),
+							);
 
 							textMesh.rotation.y = Math.PI;
 

@@ -12,6 +12,8 @@ import { useUserStore } from '@/stores/user';
 import { createPinia } from 'pinia';
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate';
 
+import ToastNotifier from '../../../src/components/ToastNotifier.vue';
+
 // TODO: fix inconsistent naming
 import { setCreator } from '../../../src/requests/SetCreator.js';
 import { GetLevelDetailsRequest } from '../../../src/requests/GetLevelDetailsRequest.js';
@@ -31,6 +33,7 @@ import { getLevelLeaderboardRequest } from '../../../src/requests/GetLevelLeader
 import { getLevelReplayRequest } from '../../../src/requests/GetLevelReplayRequest.js';
 import { removeLevelRecordRequest } from '../../../src/requests/RemoveLevelRecordRequest.js';
 import { downloadLevelRequest } from '../../../src/requests/DownloadLevelRequest.js';
+import { getBestTimeReplayRequest } from '../../../src/requests/GetBestTimeReplayRequest.js';
 
 import imageStampOk from '../../../src/assets/icons/checkmark.svg';
 import imageReport from '../../../src/assets/icons/report.svg';
@@ -48,6 +51,7 @@ let isFogEnabled = true;
 let isSliderDragging = false;
 let isSliderPlaying = true;
 let showTriggers = false;
+let showCode = false;
 // leaderboard
 let removedTimes = [];
 // image upload
@@ -63,6 +67,7 @@ init();
 
 async function init() {
 	setupEvents();
+	setupToast();
 
 	if (!window._levelLoader) window._levelLoader = new LevelLoader();
 
@@ -119,6 +124,7 @@ async function init() {
 	let detailResponseBody = await GetLevelDetailsRequest(config.SERVER_URL, levelIdentifier);
 	userID = levelIdentifierParts[0];
 	console.log(userID);
+	let is_verified = detailResponseBody?.tags?.includes?.('ok');
 
 	if ('tags' in detailResponseBody && detailResponseBody.tags.length > 0) {
 		detailResponseBody.tags.forEach((tag) => {
@@ -284,7 +290,13 @@ async function init() {
 			tagMenuInner.appendChild(submitTagsButton);
 			submitTagsButton.addEventListener('click', async () => {
 				levelUserTags = tagCheckboxes.filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.name.split('-')[1]);
-				let success = await setLevelTagsRequest(config.SERVER_URL, accessToken, levelIdentifier, null, levelUserTags);
+				let success = await setLevelTagsRequest(
+					config.SERVER_URL,
+					accessToken,
+					levelIdentifier,
+					is_verified ? ['ok'] : [],
+					levelUserTags,
+				);
 				if (success) {
 					tagMenu.style.display = 'none';
 				}
@@ -306,11 +318,15 @@ async function init() {
 		triggersButton.style.display = 'block';
 		triggersButton.addEventListener('click', () => {
 			showTriggers = !showTriggers;
+			showCode = !showCode;
 
 			scene.traverse((node) => {
 				if (node instanceof THREE.Mesh) {
 					if (node.isTrigger) {
 						node.visible = showTriggers;
+					}
+					if (node.isCode) {
+						node.visible = showCode;
 					}
 				}
 			});
@@ -340,6 +356,7 @@ async function init() {
 			if (success) {
 				verifyButton.style.display = 'none';
 				unverifyButton.style.display = 'block';
+				is_verified = true;
 
 				let queueSuccess = await removeLevelFromVerificationQueueRequest(config.SERVER_URL, accessToken, levelIdentifier);
 				if (queueSuccess) {
@@ -358,6 +375,7 @@ async function init() {
 			if (success) {
 				verifyButton.style.display = 'block';
 				unverifyButton.style.display = 'none';
+				is_verified = false;
 			}
 
 			isLoadingVerification = false;
@@ -649,17 +667,12 @@ async function init() {
 	}
 
 	//Show OK stamp on levels that have the tag
-	if ('tags' in detailResponseBody && detailResponseBody.tags.length > 0) {
-		for (const tag of detailResponseBody.tags) {
-			if (tag === 'ok') {
-				const detailsContainer = document.getElementById('main-details');
-				let stamp = document.createElement('img');
-				stamp.className = 'info-stamp-ok';
-				stamp.src = imageStampOk;
-				detailsContainer.prepend(stamp);
-				break;
-			}
-		}
+	if (is_verified) {
+		const detailsContainer = document.getElementById('main-details');
+		const stamp = document.createElement('img');
+		stamp.className = 'info-stamp-ok';
+		stamp.src = imageStampOk;
+		detailsContainer.prepend(stamp);
 	}
 
 	if (
@@ -677,8 +690,11 @@ async function init() {
 
 	// difficulty
 	let difficultyLabel = document.getElementById('difficulty');
-	difficultyLabel.innerText = (detailResponseBody.statistics?.difficulty_string || 'unrated').replace('veryhard', 'very hard');
-	difficultyLabel.classList.add('difficulty-' + (detailResponseBody.statistics?.difficulty_string || 'unrated'));
+	let difficulty = detailResponseBody?.statistics?.difficulty_string ?? 'unrated';
+	if (difficulty === 'veryhard') difficulty = 'very hard';
+	if (detailResponseBody.identifier === '29r46v7djliny6t4rzvq7:1654257963') difficulty = 'mountain';
+	difficultyLabel.innerText = difficulty;
+	difficultyLabel.classList.add('difficulty-' + difficulty.replaceAll(' ', '_'));
 
 	// get level statistics
 	let statisticsData = await getLevelStatisticsRequest(config.SERVER_URL, levelIdentifier);
@@ -759,6 +775,10 @@ async function init() {
 			showOptionsDialog('Report Level', 'Why should this level be removed?', reasonMapping, onOk);
 		});
 	}
+}
+
+function setupToast() {
+	createApp(ToastNotifier).mount('#toast-root');
 }
 
 function setupEvents() {
@@ -1031,9 +1051,62 @@ function exportLevelAsGLTF() {
 }
 
 function openLeaderboard() {
-	document.getElementById('overlay').style.display = 'block';
-	document.getElementById('leaderboard').style.display = 'block';
+	const pinia = createPinia();
+	pinia.use(piniaPluginPersistedstate);
+	const app = createApp(App);
+	app.use(pinia);
+	const userStore = useUserStore(pinia);
+
+	const overlay = document.getElementById('overlay');
+	const leaderboard = document.getElementById('leaderboard');
+	overlay.style.display = 'block';
+	leaderboard.style.display = 'block';
+
+	if (userStore.isModerator) {
+		const queryContainer = document.getElementById('leaderboard-query-container');
+		const queryInput = document.getElementById('leaderboard-query-input');
+		const queryButton = document.getElementById('leaderboard-query-button');
+		queryContainer.style.display = 'grid';
+
+		queryInput.addEventListener('keydown', handleLeaderboardQuery);
+		queryButton.addEventListener('click', handleLeaderboardQueryButton);
+	}
+
 	loadLeaderboardData();
+}
+
+function handleLeaderboardQueryButton() {
+	handleLeaderboardQuery({ code: 'Enter' }); // lol
+}
+async function handleLeaderboardQuery(e) {
+	if (e.code !== 'Enter') return;
+
+	const input = document.getElementById('leaderboard-query-input');
+	const query = input.value;
+	const params = new URLSearchParams(window.location.search);
+	const id = params.get('level');
+
+	const entry = await getBestTimeReplayRequest(config.SERVER_URL, id, query);
+	if (!entry) return;
+
+	const row = buildLeaderboardCell(
+		{
+			...entry,
+			user_name: query,
+			user_id: query,
+		},
+		3,
+	);
+	const leaderboard_extra_content = document.getElementById('leaderboard-extra-content');
+	leaderboard_extra_content.appendChild(row);
+
+	const { replay_key } = entry;
+	if (!replay_key) {
+		window.toast('No replay key', 'error');
+		return;
+	}
+
+	playReplay(replay_key);
 }
 
 function closeLeaderboard() {
@@ -1042,6 +1115,13 @@ function closeLeaderboard() {
 	removedTimes = [];
 	document.getElementById('applyLeaderboardModifications').style.display = 'none';
 	document.getElementById('leaderboard-content').innerHTML = '';
+
+	const queryContainer = document.getElementById('leaderboard-query-container');
+	const queryInput = document.getElementById('leaderboard-query-input');
+	const queryButton = document.getElementById('leaderboard-query-button');
+	queryContainer.style.display = 'none';
+	queryInput.removeEventListener('keydown', handleLeaderboardQuery);
+	queryButton.removeEventListener('click', handleLeaderboardQueryButton);
 }
 
 async function loadLeaderboardData() {
@@ -1051,6 +1131,82 @@ async function loadLeaderboardData() {
 	if (leardeboard) {
 		displayLeaderboardData(leardeboard);
 	}
+}
+
+function buildLeaderboardCell(entry, decimals) {
+	const pinia = createPinia();
+	pinia.use(piniaPluginPersistedstate);
+	const app = createApp(App);
+	app.use(pinia);
+	const userStore = useUserStore(pinia);
+
+	const row = document.createElement('div');
+	row.className = 'leaderboard-row';
+	if (entry.user_id == userID) {
+		row.className += ' leaderboard-row-creator';
+	}
+	if (entry.user_id == userStore.userID) {
+		row.className += ' leaderboard-row-self';
+	}
+	if (entry.is_verification) {
+		row.className += ' leaderboard-row-verification';
+	}
+
+	if (entry.position !== undefined) {
+		const position = document.createElement('div');
+		position.className = 'leaderboard-position';
+		position.textContent = entry.position + 1;
+		row.appendChild(position);
+	}
+
+	const name = document.createElement('a');
+	name.className = 'leaderboard-name';
+	name.textContent = entry.user_name;
+	name.href = `/levels?tab=tab_other_user&user_id=${entry.user_id}`;
+
+	const time = document.createElement('div');
+	time.className = 'leaderboard-time';
+	let minutes = Math.floor(entry.best_time / 60);
+	let seconds = (entry.best_time % 60).toFixed(decimals);
+	if (minutes < 10) {
+		minutes = '0' + minutes;
+	}
+	if (seconds < 10) {
+		seconds = '0' + seconds;
+	}
+	time.textContent = minutes + ':' + seconds;
+
+	if (entry.replay_key && userStore.isVerifier) {
+		const replayButton = document.createElement('div');
+		replayButton.className = 'replay-button';
+		time.appendChild(replayButton);
+		replayButton.addEventListener('click', () => {
+			playReplay(entry.replay_key);
+		});
+	}
+
+	const button = document.createElement('button');
+	button.className = 'leaderboard-button';
+	button.innerHTML = '&times;';
+	button.onclick = function () {
+		for (let i = 0; i < removedTimes.length; i++) {
+			if (removedTimes[i][0] === entry.user_id) {
+				removedTimes[i][1].classList.remove('leaderboard-row-removed');
+				removedTimes.splice(i, 1);
+				document.getElementById('applyLeaderboardModifications').style.display = removedTimes.length > 0 ? 'block' : 'none';
+				return;
+			}
+		}
+		removedTimes.push([entry.user_id, row]);
+		row.classList.add('leaderboard-row-removed');
+		document.getElementById('applyLeaderboardModifications').style.display = 'block';
+	};
+
+	row.appendChild(name);
+	row.appendChild(time);
+	if (userStore.isModerator === true) row.appendChild(button);
+
+	return row;
 }
 
 function displayLeaderboardData(data) {
@@ -1063,11 +1219,6 @@ function displayLeaderboardData(data) {
 		placeholder.innerHTML = 'No data yet!<br>Be the first to set a record!';
 		leaderboardContent.appendChild(placeholder);
 	} else {
-		const pinia = createPinia();
-		pinia.use(piniaPluginPersistedstate);
-		const app = createApp(App);
-		app.use(pinia);
-		const userStore = useUserStore(pinia);
 		let maxDecimals = 0;
 		data.forEach((entry) => {
 			let decimals = entry.best_time.toString().split('.')[1];
@@ -1076,69 +1227,7 @@ function displayLeaderboardData(data) {
 			}
 		});
 		data.forEach((entry) => {
-			const row = document.createElement('div');
-			row.className = 'leaderboard-row';
-			if (entry.user_id == userID) {
-				row.className += ' leaderboard-row-creator';
-			}
-			if (entry.user_id == userStore.userID) {
-				row.className += ' leaderboard-row-self';
-			}
-			if (entry.is_verification) {
-				row.className += ' leaderboard-row-verification';
-			}
-
-			const position = document.createElement('div');
-			position.className = 'leaderboard-position';
-			position.textContent = entry.position + 1;
-
-			const name = document.createElement('a');
-			name.className = 'leaderboard-name';
-			name.textContent = entry.user_name;
-			name.href = `/levels?tab=tab_other_user&user_id=${entry.user_id}`;
-
-			const time = document.createElement('div');
-			time.className = 'leaderboard-time';
-			let minutes = Math.floor(entry.best_time / 60);
-			let seconds = (entry.best_time % 60).toFixed(maxDecimals);
-			if (minutes < 10) {
-				minutes = '0' + minutes;
-			}
-			if (seconds < 10) {
-				seconds = '0' + seconds;
-			}
-			time.textContent = minutes + ':' + seconds;
-
-			if (entry.replay_key && userStore.isVerifier) {
-				const replayButton = document.createElement('div');
-				replayButton.className = 'replay-button';
-				time.appendChild(replayButton);
-				replayButton.addEventListener('click', () => {
-					playReplay(entry.replay_key);
-				});
-			}
-
-			const button = document.createElement('button');
-			button.className = 'leaderboard-button';
-			button.innerHTML = '&times;';
-			button.onclick = function () {
-				for (let i = 0; i < removedTimes.length; i++) {
-					if (removedTimes[i][0] === entry.user_id) {
-						removedTimes[i][1].classList.remove('leaderboard-row-removed');
-						removedTimes.splice(i, 1);
-						document.getElementById('applyLeaderboardModifications').style.display = removedTimes.length > 0 ? 'block' : 'none';
-						return;
-					}
-				}
-				removedTimes.push([entry.user_id, row]);
-				row.classList.add('leaderboard-row-removed');
-				document.getElementById('applyLeaderboardModifications').style.display = 'block';
-			};
-
-			row.appendChild(position);
-			row.appendChild(name);
-			row.appendChild(time);
-			if (userStore.isModerator === true) row.appendChild(button);
+			const row = buildLeaderboardCell(entry, maxDecimals);
 			leaderboardContent.appendChild(row);
 		});
 	}
@@ -1258,7 +1347,7 @@ async function removeLeaderboardTimes() {
 		if (success) {
 			removedTimes[i][1].remove();
 		} else {
-			alert('Failed to remove user');
+			window.toast('Failed to remove user', 'error');
 		}
 	}
 	removedTimes = [];

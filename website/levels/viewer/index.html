@@ -17,6 +17,8 @@
 	<body>
 		<script type="module" src="scripts/level_viewer.js"></script>
 
+		<div id="toast-root"></div>
+
 		<div class="popup" id="popup">
 			<div class="popup-inner">
 				<div class="cell-title" id="popup-title"></div>
@@ -176,7 +178,12 @@
 				<span id="leaderboard-title"></span>
 			</div>
 			<div id="leaderboard-content" class="leaderboard-content"></div>
+			<div id="leaderboard-extra-content" class="leaderboard-content"></div>
 			<div class="leaderboard-close" id="leaderboard-close">&times;</div>
+			<div class="leaderboard-query" id="leaderboard-query-container">
+				<input type="text" name="leaderboard-query-input" id="leaderboard-query-input" />
+				<button id="leaderboard-query-button">Query</button>
+			</div>
 			<button id="applyLeaderboardModifications">Confirm</button>
 		</div>
 

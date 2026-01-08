@@ -1,12 +1,13 @@
 export async function unhideLevelRequest(server, accessToken, levelID) {
-    const levelIdentifierParts = levelID.split(':')
-    const identifierPath = levelIdentifierParts[0] + '/' + levelIdentifierParts[1]
-    const response = await fetch(server + 'show/' + identifierPath, {headers: {'Authorization': 'Bearer ' + accessToken}})
-    const responseBody = await response.text();
-    if(response.status != 200 || responseBody !== 'Success') {
-      confirm("Error: " + responseBody);
-      return false
-    }
-  
-    return true
-  }
+	const levelPath = levelID.split(/[:/]/).slice(0, 2).join('/');
+	const response = await fetch(server + 'show/' + levelPath, {
+		headers: { Authorization: 'Bearer ' + accessToken },
+	});
+	const responseBody = await response.text();
+	if (response.status != 200 || responseBody !== 'Success') {
+		window.toast('Error: ' + responseBody, "error");
+		return false;
+	}
+
+	return true;
+}
